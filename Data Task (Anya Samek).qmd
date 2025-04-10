@@ -1,0 +1,473 @@
+---
+title: "Data Task (Anya Samek)"
+format: pdf
+editor: visual
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(stringr)
+if (!require(reshape2)) install.packages("reshape2")
+library(tidyr)
+library(reshape2)
+set.seed(123)  
+```
+
+```{r}
+# DATA SIMULATION
+us_states <- c("Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "Florida", "Georgia","Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming")
+
+age <- sample(18:65, 5000, replace = TRUE)
+
+## INCOME LEVELS BY AGE
+income_by_age <- function(age) {
+  if (age <= 24) {
+    return(sample(c("<$30,000", "$30,000–$49,999", "$50,000–$69,999", "$70,000–$99,999", "$100,000+"), 1, prob = c(0.6, 0.25, 0.1, 0.03, 0.02)))
+  } else if (age >= 25 & age <= 34) {
+    return(sample(c("<$30,000", "$30,000–$49,999", "$50,000–$69,999", "$70,000–$99,999", "$100,000+"), 1, prob = c(0.4, 0.35, 0.15, 0.05, 0.05)))
+  } else if (age >= 35 & age <= 44) {
+    return(sample(c("<$30,000", "$30,000–$49,999", "$50,000–$69,999", "$70,000–$99,999", "$100,000+"), 1, prob = c(0.25, 0.4, 0.2, 0.1, 0.05)))
+  } else if (age >= 45 & age <= 54) {
+    return(sample(c("<$30,000", "$30,000–$49,999", "$50,000–$69,999", "$70,000–$99,999", "$100,000+"), 1, prob = c(0.2, 0.3, 0.3, 0.15, 0.05)))
+  } else if (age >= 55 & age <= 65) {
+    return(sample(c("<$30,000", "$30,000–$49,999", "$50,000–$69,999", "$70,000–$99,999", "$100,000+"), 1, prob = c(0.2, 0.25, 0.3, 0.2, 0.05)))}}
+
+income <- sapply(age, income_by_age)
+
+## EDUCATION LEVELS BY AGE
+education <- sapply(age, function(x) {
+  if (x < 20) {return(sample(c("Middle School", "High School"), 1, prob = c(0.2, 0.8))) # Mostly high school for < 20
+  } else if (x >= 20 & x < 25) {return(sample(c("Middle School", "High School", "Bachelor's", "Master's"), 1, prob = c(0.1, 0.4, 0.4, 0.1)))}
+  else {return(sample(c("Middle School", "High School", "Bachelor's", "Master's", "PhD"), 1, prob = c(0.05, 0.3, 0.45, 0.2, 0.1)))}})
+
+## MARTIAL STATUS BY AGE
+marital_status <- sapply(age, function(age) {
+  if (age <= 24) {return(sample(c("Single", "Married", "Divorced"), 1, prob = c(0.9, 0.09, 0.01)))} 
+  else if (age >= 25 & age <= 34) {return(sample(c("Single", "Married", "Divorced"), 1, prob = c(0.6, 0.35, 0.05)))} 
+  else if (age >= 35 & age <= 54) {return(sample(c("Single", "Married", "Divorced"), 1, prob = c(0.4, 0.4, 0.2)))}  
+  else {return(sample(c("Single", "Married", "Divorced"), 1, prob = c(0.2, 0.35, 0.2)))}})
+
+## CHILDREN BY MARITAL STATUS 
+children <- mapply(function(marital_status, age) {
+  if (marital_status == "Single") {
+    return(sample(c("Yes", "No"), 1, prob = c(0.05, 0.95)))  # Single people much less likely to have children
+  } else if (marital_status == "Married") {
+    # Married people more likely to have children
+    if (age <= 24) {return(sample(c("Yes", "No"), 1, prob = c(0.1, 0.9)))} 
+    else if (age >= 25 & age <= 34) {return(sample(c("Yes", "No"), 1, prob = c(0.35, 0.65)))} 
+    else if (age >= 35 & age <= 44) {return(sample(c("Yes", "No"), 1, prob = c(0.4, 0.6)))} 
+    else {return(sample(c("Yes", "No"), 1, prob = c(0.65, 0.35))) }} 
+  else { # Divorced people's likelihood of having children
+    return(sample(c("Yes", "No"), 1, prob = c(0.5, 0.5)))}}, marital_status, age)
+```
+
+```{r}
+# DATA SIMULATION
+## Demographics 
+baseline <- data.frame(id = 1:5000,  
+  age = sample(18:65, 5000, replace = TRUE), 
+  gender = sample(c("Male", "Female", "Other"), 5000, replace = TRUE, 
+                  prob = c(0.495, 0.495, 0.01)),
+  marital_status = sample(c("Single", "Married", "Divorced"), 5000, replace = TRUE),
+  children = ifelse(
+    sample(c("Single", "Married", "Divorced"), 5000, replace = TRUE) == "Single", 
+    sample(c("Yes", "No"), 5000, replace = TRUE, prob = c(0.05, 0.95)),
+    sample(c("Yes", "No"), 5000, replace = TRUE, prob = c(0.6, 0.4))),
+  income = income, 
+  education = education, 
+  race = sample(c("White", "Black", "Asian", "Hispanic", "Other"), 5000, replace = TRUE),
+  state = sample(us_states, 5000, replace = TRUE))
+```
+
+```{r}
+# DATA SIMULATION
+## BASELINE QUESTIONS
+### HAVE YOU HAD THE VACCINE YET?
+baseline$b_had_vaccine <- mapply(function(education, income) {
+  prob_vaccine <- 0.4  # Default probability (for low education and low income)
+  # Higher probability for higher education levels
+  if (education %in% c("Bachelor's", "Master's", "PhD")) {
+    prob_vaccine <- prob_vaccine + 0.1}
+  # Higher probability for higher income levels
+  if (income %in% c("$50,000–$74,999", "$75,000–$99,999", "$100,000 or more")) {
+    prob_vaccine <- prob_vaccine + 0.1}
+  return(sample(c("Yes", "No"), 1, replace = TRUE, prob = c(prob_vaccine, 1 - prob_vaccine)))}, baseline$education, baseline$income)
+
+### WHY OR WHY NOT?
+baseline$b_reasons_vaccine <- mapply(function(b_had_vaccine) {
+  if (b_had_vaccine == "Yes") {
+    reasons <- sample(c("Health reasons", "To Travel", "Required by work", "Influenced by family and/or friends"), sample(1:4, 1), replace = FALSE)} else {
+    reasons <- sample(c("Health reasons", "Safety concerns", "Distrust of it", "Don't believe it is effective", "Religious reasons"), sample(1:5, 1), replace = FALSE)}
+  return(paste(reasons, collapse = ", "))}, baseline$b_had_vaccine)
+
+### ARE YOU CONSIDERING GETTING THE VACCINE?
+baseline$b_considering_vaccine <- ifelse(baseline$b_had_vaccine == "No", sample(c("Yes", "No"), 5000, replace = TRUE, prob = c(0.5, 0.5)), NA) 
+
+### HAVE YOU EVER TESTED POSITIVE FOR COVID?
+baseline$b_tested_positive <- mapply(function(vaccinated_status) {
+  if (vaccinated_status == "Yes") {# Lower chance of testing positive for vaccinated (10% chance)
+    return(sample(c("Yes", "No"), 1, prob = c(0.1, 0.9)))} 
+  else {# Higher chance of testing positive for non-vaccinated (25% chance)
+    return(sample(c("Yes", "No"), 1, prob = c(0.25, 0.75)))}}, baseline$b_had_vaccine)
+
+### TO WHAT EXTENT ARE YOU WORRIED ABOUT GETTING COVID? 
+#### Where: 1. "Not worried at all", 2. "Slightly worried", 3. "Moderately worried", 4. "Very worried", 5. "Extremely worried"
+baseline$b_worried_about_covid <- ifelse(
+  baseline$b_tested_positive == "No", 
+  sample(1:5, 5000, replace = TRUE, prob = c(0.1, 0.2, 0.4, 0.2, 0.1)), NA)
+
+### ARE YOU IMMUNOCOMPROMISED? (Considered immunocompromised if you had or have one or more following conditions: cancer, autoimmune diseases, organ transplants, etc)
+baseline$is_immunocompromised <- sample(c("Yes", "No"), 5000, replace = TRUE, prob = c(0.1, 0.9))  
+
+### ARE THERE MEMBERS IN YOUR HOUSEHOLD (EXCLUDING YOURSELF) WHO ARE IMMUNOCOMPROMISED?
+baseline$household_immunocompromised <- sample(c("Yes", "No"), 5000, replace = TRUE, prob = c(0.2, 0.8))
+
+### HAVE YOU EVER BEEN VACCINATED FOR OTHER DISEASES? (Provide list of possible other vaccinations)
+baseline$other_vaccinations <- sample(c("Yes, for all or almost all", "Yes, but only a few diseases", "No", "Unsure"), 5000, replace = TRUE)
+
+### TO WHAT EXTENT ARE YOU WORRIED ABOUT THE LONG-TERM EFFECTS OF COVID-19? (i.e. What's known as "Long Covid")
+baseline$b_long_term_concerns <- mapply(function(b_had_vaccine) {
+  if (b_had_vaccine == "Yes") {# Probabilities for those who have received the vaccine, expect them to be more worried
+    return(sample(1:5, 1, replace = TRUE, prob = c(0.4, 0.3, 0.2, 0.1, 0))) 
+  } else {# Probabilities for those who have not received the vaccine, expect them to be less worried
+    return(sample(1:5, 1, replace = TRUE, prob = c(0.2, 0.3, 0.4, 0.1, 0)))}
+}, baseline$b_had_vaccine)
+
+### TO WHAT EXTENT ARE YOU WORRIED ABOUT THE LONG-TERM EFFECTS OF THE COVID-19 VACCINE?
+baseline$b_vaccine_long_term_concerns <- mapply(function(b_had_vaccine) {
+  if (b_had_vaccine == "Yes") {# Probabilities for those who have received the vaccine
+    return(sample(1:5, 1, replace = TRUE, prob = c(0.1, 0.2, 0.1, 0.6, 0))) 
+  } else {# Probabilities for those who have not received the vaccine
+    return(sample(1:5, 1, replace = TRUE, prob = c(0.4, 0.3, 0.2, 0.1, 0)))}
+}, baseline$b_had_vaccine)
+
+### DO YOU BELIEVE THE COVID-19 VACCINE SHOULD BE MANDATED? 
+baseline$b_vaccine_mandates <- mapply(function(b_had_vaccine) {
+  if (b_had_vaccine == "Yes") {
+    # Probabilities for those who have received the vaccine
+    return(sample(c("Yes, for everyone", "Yes, but only for certain groups", "No, it should not be mandatory", "Unsure"), 1, replace = TRUE, prob = c(0.6, 0.3, 0.05, 0.05)))} else {# Probabilities for those who have not received the vaccine
+    return(sample(c("Yes, for everyone", "Yes, but only for certain groups", "No, it should not be mandatory", "Unsure"), 1, replace = TRUE, prob = c(0.05, 0.4, 0.45, 0.1)))}}, baseline$b_had_vaccine)
+
+### Can also add more unrelated questions to reduce bias (such as demand characteristics bias) 
+```
+
+```{r}
+# DATA SIMULATION: Random Assignment
+baseline$assignment <- sample(c("Reason", "Emotions", "None"), 5000, replace = TRUE, prob = c(1/3, 1/3, 1/3))
+```
+
+```{r}
+# DATA SIMULATION: Endline Questions
+# Select a sample of 4500 respondents for the endline survey
+endline_sample <- sample(nrow(baseline), 4500)
+# Create the endline data frame with only the sampled 4500 respondents
+endline <- baseline[endline_sample, ]
+
+### HAVE YOU HAD THE VACCINE YET?
+# Initialize the 'e_had_vaccine' column from 'b_had_vaccine'
+endline$e_had_vaccine <- endline$b_had_vaccine
+
+# Apply changes to 'e_had_vaccine' based on the conditions for the sampled respondents
+endline$e_had_vaccine <- mapply(function(education, income, assignment, b_had_vaccine) {# Only modify "No" responses
+  if (b_had_vaccine == "No") {# Set the default prob of changing from "No" to "Yes"
+    prob_change_to_yes <- 0  # Default probability of changing "No" to "Yes"
+    # Adjust based on assignment group
+    if (assignment == "Reason") {prob_change_to_yes <- 0.4}  
+    else if (assignment == "Emotions") {prob_change_to_yes <- 0.25} 
+    else if (assignment == "None") {prob_change_to_yes <- 0.1}
+    # Decide if they will change their answer to "Yes" based on the adjusted probability
+    return(sample(c("Yes", "No"), 1, replace = TRUE, prob = c(prob_change_to_yes, 1 - prob_change_to_yes)))}
+  # If answered 'Yes' for the baseline, they should also answer 'Yes' for the endline
+  return("Yes")}, endline$education, endline$income, endline$assignment, endline$b_had_vaccine)
+
+### WHY OR WHY NOT?
+# Initialize reasons for 'e_reasons_vaccine' by copying the baseline reasons
+endline$e_reasons_vaccine <- endline$b_reasons_vaccine
+
+# Now update reasons for those who changed their answer from "No" to "Yes"
+for (i in 1:nrow(endline)) {
+  if (endline$b_had_vaccine[i] == "No" && endline$e_had_vaccine[i] == "Yes") {# Update reasons for those who decided to get the vaccine after initially refusing
+    reasons <- sample(c("Health reasons", "To Travel", "Required by work", "Influenced by family and/or friends"), sample(1:4, 1), replace = FALSE)
+    endline$e_reasons_vaccine[i] <- paste(reasons, collapse = ", ")} else {# For everyone else (those who didn't change their answer), keep the baseline reasons
+    endline$e_reasons_vaccine[i] <- endline$b_reasons_vaccine[i]}}
+
+### HAVE YOU EVER TESTED POSITIVE FOR COVID?
+# Initialize the 'e_tested_positive' column from 'b_tested_positive'
+endline$e_tested_positive <- endline$b_tested_positive
+
+# Apply changes to 'e_tested_positive' based on the conditions
+endline$e_tested_positive <- mapply(function(education, income, assignment, b_tested_positive, b_had_vaccine) {# Only modify "No" responses
+  if (b_tested_positive == "No") {prob_change_to_yes <- 0  # Default probability of changing "No" to "Yes"
+    # Adjust the probability based on whether they had the vaccine at baseline
+    if (b_had_vaccine == "No") {prob_change_to_yes <- 0.4} # 40% for those w/o vaccine
+    else if (b_had_vaccine == "Yes") {prob_change_to_yes <- 0.2} # 20% for those w/ vaccine
+    # Decide if they will change their answer to "Yes" based on the adjusted probability
+    return(sample(c("Yes", "No"), 1, replace = TRUE, prob = c(prob_change_to_yes, 1 - prob_change_to_yes)))}
+  # If the person answered 'Yes' for the baseline survey, they should also answer 'Yes' for the endline survey
+  return("Yes")}, endline$education, endline$income, endline$assignment, endline$b_tested_positive, endline$b_had_vaccine)
+
+### ARE YOU WORRIED ABOUT COVID?
+# Copy baseline answers into e_worried_about_covid for endline
+endline$e_worried_about_covid <- endline$b_worried_about_covid
+
+# Change answers for those who did not test positive and answered b_had_vaccine == "No"
+for (i in 1:nrow(endline)) {if (endline$b_tested_positive[i] == "No" && endline$b_had_vaccine[i] == "No") {# Update e_worried_about_covid for these individuals based on the sample distribution
+    endline$e_worried_about_covid[i] <- sample(1:5, 1, replace = TRUE, prob = c(0.1, 0.2, 0.4, 0.2, 0.1))}}
+
+# Initialize 'b_long_term_concerns', 'b_vaccine_long_term_concerns', and 'b_vaccine_mandates'
+endline <- endline %>%
+  mutate(e_long_term_concerns = b_long_term_concerns,
+    e_vaccine_long_term_concerns = b_vaccine_long_term_concerns,
+    e_vaccine_mandates = b_vaccine_mandates)
+
+### ADJUST WORRIES BASED ON CAMPAIGN
+# Modify responses for those who did the "Reason" and "Emotions" campaigns
+for (i in endline_sample) {# Check if 'assignment' is not NA and proceed with the assignment
+  if (!is.na(endline$assignment[i])) {
+    if (endline$assignment[i] == "Reason") {
+# Make those exposed to the "Reason" campaign less worried about COVID-19 (scale 1-5)
+      endline$e_long_term_concerns[i] <- sample(1:5, 1, replace = TRUE, prob = c(0.1, 0.3, 0.5, 0.1, 0)) 
+# Make those exposed to the "Reason" campaign less worried about the long-term effects of the COVID-19 vaccine (scale 1-5)
+      endline$e_vaccine_long_term_concerns[i] <- sample(1:5, 1, replace = TRUE, prob = c(0.1, 0.3, 0.5, 0.1, 0))} else if (endline$assignment[i] == "Emotions") {# Make those exposed to the "Emotions" campaign less worried about long-term effects of COVID-19, even less than the Reason campaign (scale 1-5)
+      endline$e_long_term_concerns[i] <- sample(1:5, 1, replace = TRUE, prob = c(0.05, 0.2, 0.7, 0.05, 0)) 
+# Make those exposed to the "Emotions" campaign less worried about the long-term effects of COVID-19 vaccine, even less than the Reason campaign (scale 1-5)
+      endline$e_vaccine_long_term_concerns[i] <- sample(1:5, 1, replace = TRUE, prob = c(0.05, 0.2, 0.7, 0.05, 0))}}}
+```
+
+```{r}
+# ANALYSIS AND REPORTING
+## MERGE DATASETS
+endline_subset <- endline %>%
+  select(-any_of(intersect(names(endline), names(baseline))[-1]))
+
+vaccine_ad_campaigns_merged <- left_join(baseline, endline_subset, by = "id")
+```
+
+```{r}
+# ANALYSIS AND REPORTING
+## Produce tables or figures for the effectiveness of each campaign  
+
+# HAVE YOU HAD THE VACCINE YET?
+# Create two proportion tables
+prop_b <- prop.table(table(vaccine_ad_campaigns_merged$assignment, vaccine_ad_campaigns_merged$b_had_vaccine), margin = 1) * 100
+prop_e <- prop.table(table(vaccine_ad_campaigns_merged$assignment, vaccine_ad_campaigns_merged$e_had_vaccine), margin = 1) * 100
+
+# Combine them into one table for comparison
+had_vaccine <- cbind(`Baseline` = prop_b[, "Yes"],
+                       `Endline` = prop_e[, "Yes"])
+cat("Percentage of Respondents Who Had the Vaccine (Baseline vs Endline)\n")
+had_vaccine
+
+# Prepare the data for ggplot2
+had_vaccine_g <- data.frame(Assignment = rep(rownames(had_vaccine), 2),
+  Time = rep(c("Baseline", "Endline"), each = nrow(had_vaccine)),
+  Percentage = c(had_vaccine[, "Baseline"], had_vaccine[, "Endline"]))
+
+# Create the bar plot for vaccination rates
+vaccination_rates <- ggplot(had_vaccine_g, aes(x = Assignment, y = Percentage, fill = Time)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")), 
+            position = position_dodge(1), vjust = -0.5, size = 5) + 
+  labs(title = "Vaccination Rates: Baseline vs. Endline",
+       x = "Assignment Group", y = "Percentage of Respondents Vaccinated",
+       fill = "Time") +  theme_minimal() + scale_fill_brewer(palette = "Pastel1") +
+  ylim(0, max(100))
+vaccination_rates
+```
+
+```{r}
+# HAVE YOU HAD THE VACCINE YET?
+# By education level 
+# Calculate the proportion of vaccinated individuals by education and assignment
+education_vaccination <- aggregate(cbind(
+    baseline_vacc = as.numeric(b_had_vaccine == "Yes"),
+    endline_vacc = as.numeric(e_had_vaccine == "Yes")) ~ education + assignment, 
+  data = vaccine_ad_campaigns_merged, FUN = mean)
+
+# Convert to long format for easier plotting
+education_vaccination_long <- melt(
+  education_vaccination, 
+  id.vars = c("education", "assignment"),
+  variable.name = "survey_time",
+  value.name = "vaccination_rate")
+
+# Clean up the labels
+education_vaccination_long$survey_time <- factor(
+  education_vaccination_long$survey_time,
+  levels = c("baseline_vacc", "endline_vacc"),
+  labels = c("Baseline", "Endline"))
+
+# Create the plot title
+education_vacc_title <- "COVID-19 Vaccination Rates by Education Level and Campaign Assignment"
+wrapped_education_vacc_title <- str_wrap(education_vacc_title, width = 50)
+
+# Create the education vaccination plot
+ggplot(education_vaccination_long, aes(x = survey_time, y = vaccination_rate, fill = survey_time)) +
+  geom_bar(stat = "identity") +
+  facet_grid(education ~ assignment) +
+  labs(title = wrapped_education_vacc_title,
+       y = "Proportion Vaccinated",
+       x = "Survey Time") +
+  ylim(0, 1) +
+  geom_text(aes(label = scales::percent(vaccination_rate, accuracy = 0.1)), vjust = -0.5, size = 3) +
+  scale_fill_manual(values = c("Baseline" = "#56B4E9", "Endline" = "#009E73")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+# ARE YOU WORRIED ABOUT COVID?
+worried_about_covid <- aggregate(cbind(b_worried_about_covid, e_worried_about_covid) ~ assignment, data = vaccine_ad_campaigns_merged, FUN = mean)
+colnames(worried_about_covid) <- c("Assignment", "Baseline Avg Worried About Covid", "Endline Avg Worried About Covid")
+
+worried_about_covid
+```
+
+```{r}
+# AVERAGE WORRY LEVELS FOR LONG-TERM EFFECTS OF COVID-19
+long_term_covid_concerns <- aggregate(cbind(b_long_term_concerns, e_long_term_concerns) ~ assignment, data = vaccine_ad_campaigns_merged, FUN = mean)
+names(long_term_covid_concerns) <- c("Assignment", "Baseline", "Endline")
+
+long_term_covid_concerns_t <- kable(long_term_covid_concerns, 
+      caption = "Mean Worry Levels of Long-term Effects COVID-19 by Assignment")
+
+long_term_covid_concerns_t
+
+# AVERAGE WORRY LEVELS FOR LONG-TERM EFFECTS OF COVID-19 BY VACCINATION STATUS 
+long_term_covid_concerns_vax <- aggregate(cbind(b_long_term_concerns, e_long_term_concerns) ~ assignment + b_had_vaccine, 
+                                          data = vaccine_ad_campaigns_merged, 
+                                          FUN = mean)
+names(long_term_covid_concerns_vax) <- c("Assignment", "Vaccinated at Baseline", "Baseline", "Endline")
+
+long_term_covid_concerns_vax_t <- kable(long_term_covid_concerns_vax, 
+                                        caption = "Mean Worry Levels of Long-term Effects of COVID-19 by Assignment and Vaccination Status")
+long_term_covid_concerns_vax_t
+
+long_term_covid_concerns_vax_long <- long_term_covid_concerns_vax %>%
+  pivot_longer(cols = c("Baseline", "Endline"),
+               names_to = "Time",
+               values_to = "Mean_Worry_Level")
+
+ggplot(long_term_covid_concerns_vax_long, 
+       aes(x = Assignment, y = Mean_Worry_Level, fill = Time)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7)) +
+  geom_text(aes(label = round(Mean_Worry_Level, 2)), 
+            position = position_dodge(width = 0.7), 
+            vjust = -0.3, size = 3) +
+  facet_wrap(~ `Vaccinated at Baseline`) +
+  labs(title = "Average Worry About Long-Term Effects of COVID-19",
+    subtitle = "By Assignment and Baseline Vaccination Status",
+    x = "Assignment Group", y = "Mean Worry Level (1–5 Scale)", fill = "Survey Time") +
+  theme_minimal() + scale_fill_brewer(palette = "Set2")
+
+# AVERAGE WORRY LEVELS FOR LONG-TERM EFFECTS OF COVID-19 VACCINE
+long_term_vaccine_concerns <- aggregate(cbind(b_vaccine_long_term_concerns, e_vaccine_long_term_concerns) ~ assignment, 
+                                        data = vaccine_ad_campaigns_merged, 
+                                        FUN = mean)
+names(long_term_vaccine_concerns) <- c("Assignment", "Baseline", "Endline")
+
+long_term_vaccine_concerns_t <- kable(long_term_vaccine_concerns, 
+      caption = "Mean Worry Levels for Long-term Effects of COVID-19 Vaccine by Assignment")
+
+long_term_vaccine_concerns_t
+
+# AVERAGE WORRY LEVELS FOR LONG-TERM EFFECTS OF COVID-19 OF COVID-19 BY VACCINATION STATUS
+long_term_vaccine_concerns_vax <- aggregate(cbind(b_vaccine_long_term_concerns, e_vaccine_long_term_concerns) ~ assignment + b_had_vaccine, 
+                                            data = vaccine_ad_campaigns_merged, 
+                                            FUN = mean)
+names(long_term_vaccine_concerns_vax) <- c("Assignment", "Vaccinated at Baseline", "Baseline", "Endline")
+
+long_term_vaccine_concerns_vax_t <- kable(long_term_vaccine_concerns_vax, 
+                                          caption = "Mean Worry Levels for Long-term Effects of COVID-19 Vaccine by Assignment and Vaccination Status")
+long_term_vaccine_concerns_vax_t
+
+long_term_vaccine_concerns_vax_long <- pivot_longer(
+  long_term_vaccine_concerns_vax,
+  cols = c("Baseline", "Endline"),
+  names_to = "Time",
+  values_to = "Mean_Worry_Level")
+
+ggplot(long_term_vaccine_concerns_vax_long, 
+       aes(x = Assignment, y = Mean_Worry_Level, fill = Time)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7)) +
+  geom_text(aes(label = round(Mean_Worry_Level, 2)), 
+            position = position_dodge(width = 0.7), 
+            vjust = -0.3, size = 3) +
+  facet_wrap(~ `Vaccinated at Baseline`) +
+  labs(title = "Average Worry About Long-Term Effects of COVID-19 Vaccine",
+    subtitle = "By Assignment and Baseline Vaccination Status",
+    x = "Assignment Group", y = "Mean Worry Level (1–5 Scale)", fill = "Survey Time") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+```
+
+```{r}
+# Average worry levels for long-term effects of COVID by gender
+gender_concerns <- aggregate(cbind(b_long_term_concerns, e_long_term_concerns) ~ gender + assignment, data = vaccine_ad_campaigns_merged, FUN = mean)
+
+gender_concerns_long <- melt(gender_concerns, 
+  id.vars = c("gender", "assignment"),
+  variable.name = "survey_time",
+  value.name = "concern_level")
+
+# Clean up the labels
+gender_concerns_long$survey_time <- factor(gender_concerns_long$survey_time,
+  levels = c("b_long_term_concerns", "e_long_term_concerns"),
+  labels = c("Baseline", "Endline"))
+
+# Create the plot title
+gender_title <- "Long-term COVID-19 Concern Levels by gender and campaign assignment"
+wrapped_gender_title <- str_wrap(gender_title, width = 50)
+
+# Create the gender plot
+ggplot(gender_concerns_long, aes(x = survey_time, y = concern_level, fill = survey_time)) +
+  geom_bar(stat = "identity") +
+  facet_grid(gender ~ assignment) +
+  labs(title = wrapped_gender_title, y = "Average Concern Level (1-5)",
+       x = "Survey Time") +
+  ylim(0, 5) +
+  geom_text(aes(label = round(concern_level, 2)), vjust = -0.5, size = 3) +
+  scale_fill_manual(values = c("Baseline" = "#56B4E9", "Endline" = "#009E73")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+education_concerns <- aggregate(
+  cbind(b_long_term_concerns, e_long_term_concerns) ~ education + assignment, 
+  data = vaccine_ad_campaigns_merged, 
+  FUN = mean)
+
+# Convert to long format for easier plotting
+education_concerns_long <- melt(education_concerns, 
+  id.vars = c("education", "assignment"),
+  variable.name = "survey_time",
+  value.name = "concern_level")
+
+# Clean up the labels
+education_concerns_long$survey_time <- factor(education_concerns_long$survey_time,
+  levels = c("b_long_term_concerns", "e_long_term_concerns"),
+  labels = c("Baseline", "Endline"))
+
+# Create the plot title
+education_title <- "Long-term COVID-19 Concern Levels by education and campaign assignment"
+wrapped_education_title <- str_wrap(education_title, width = 50)
+
+# Create the education plot
+ggplot(education_concerns_long, aes(x = survey_time, y = concern_level, fill = survey_time)) +
+  geom_bar(stat = "identity") +
+  facet_grid(education ~ assignment) +
+  labs(title = wrapped_education_title, y = "Average Concern Level (1-5)",
+       x = "Survey Time") +
+  ylim(0, 5) +
+  geom_text(aes(label = round(concern_level, 2)), vjust = -0.5, size = 3) +
+  scale_fill_manual(values = c("Baseline" = "#56B4E9", "Endline" = "#009E73")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+
+```
